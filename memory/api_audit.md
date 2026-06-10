@@ -45,6 +45,28 @@ Key response fields for PathwayAU:
 
 PathwayAU scopes to request: VSA:ENT:D, VSA:ENT:E, VSA:ENT:G, VSA:ENT:C, VSA:ENT:I
 
+## BROWSER-RENDERED ACCESS — CONFIRMED WORKING (2026-06-10)
+
+immi.homeaffairs.gov.au returns 403 to plain HTTP (curl/WebFetch — no browser headers/session)
+but renders normally in a real browser session. Tested live via Claude in Chrome:
+
+| Page | URL | Result |
+|---|---|---|
+| SkillSelect Invitation Rounds | `immi.homeaffairs.gov.au/visas/working-in-australia/skillselect/invitation-rounds` | ✅ Full data: occupation ceilings + min points per occupation (189/491) for current round, monthly invitation totals 2025-26, state/territory nomination counts (190/491) by state |
+| Points Table (189) | `immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/skilled-independent-189/points-table` | ✅ Full points criteria: age, English, employment, education, PY, NAATI, regional study, partner skills |
+| Global Visa Processing Times | `immi.homeaffairs.gov.au/visas/getting-a-visa/visa-processing-times/global-visa-processing-times` | ✅ Page loads; tool is an interactive form (visa type/stream/date → result) — needs date-picker interaction to extract values |
+
+**Finding:** No underlying JSON/XHR API backs these pages — checked network requests, only analytics calls present. Content is server-rendered HTML baked in at request time.
+
+**Ingestion strategy (interim, until Dev Portal "Case" API is confirmed):**
+- Use a headless/real browser session (not raw HTTP) to render and extract these pages on a schedule
+- This is structured extraction of known pages/known structure (same "not scraping" justification as state occupation lists), now confirmed technically viable
+- Recommended frequency: SkillSelect invitation rounds — after each round (rounds are periodic, dates announced in advance e.g. "next round 4 June 2026"); Points table — quarterly (rules change infrequently); Processing times — monthly
+
+This closes GAP 10 (Processing Time Tracker), GAP 12 (State Quota Status), and Module 1 (SkillSelect Invitation Rounds) / Module 8 (Points Calculator) data sourcing — previously listed as Tier C "blocked, FOI-PDF-only."
+
+---
+
 ## TIER A — TRUE REST APIs (use directly in platform)
 
 ### 1. ABS Data API — GOLDEN SOURCE OF TRUTH
