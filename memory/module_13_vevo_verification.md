@@ -14,6 +14,34 @@ Every student's PathwayAU journey starts here. Instead of self-reported visa det
 
 ---
 
+## CURRENT STATUS & MVP STRATEGY (updated 2026-06-10)
+
+Live API access via the Home Affairs Visa Entitlements API requires org registration at
+`am.homeaffairs.gov.au` under a "Permitted Purpose" (employer, education provider, industry
+body, background screener, MARA agent, Medicare officer). A startup without an ABN/legal
+entity in one of these categories cannot self-register today.
+
+**MVP path (Phase 1): myVEVO PDF self-upload**
+- Student opens the free **myVEVO** app (Home Affairs), generates their own visa entitlement
+  PDF/email, and uploads it to PathwayAU during onboarding.
+- Platform parses the PDF (same fields as the live API: subclass, expiry, grant date,
+  conditions, work/study entitlements) and populates the `StudentProfile` exactly as if the
+  API had returned it — but tagged as a **snapshot**, not live.
+- This is 100% government-sourced data (it originates from Home Affairs' own VEVO system),
+  just delivered as a static document instead of a live call.
+
+**Phase 2 (target): live API**
+- Once PathwayAU incorporates with an ABN and registers as an education-tech / industry-body
+  provider (or partners with a MARA-registered agent), switch to the live `/checks` endpoint
+  described below. Onboarding flow and profile schema are unchanged — only `verification_source`
+  and `last_verified_at` semantics change from snapshot to live.
+
+**Phase 3 (interim, optional): MARA agent partnership**
+- A MARA-registered migration agent partner already has VEVO access and could perform checks
+  on the platform's behalf under their permitted purpose, bridging the gap until Phase 2.
+
+---
+
 ## API DETAILS
 
 ```
@@ -31,6 +59,20 @@ Spec:      (Visa)_Entitlements-1.0.31.yaml (saved in Downloads)
 ---
 
 ## STUDENT ONBOARDING FORM — INPUT FIELDS
+
+### Phase 1 (MVP) — myVEVO PDF upload
+
+```
+SECTION 1 — Visa Verification
+  □ Upload myVEVO PDF/email (student generates this themselves via the free myVEVO app)
+  □ Platform parses PDF → populates visa subclass, expiry, conditions, entitlements
+  □ visa_verification_source = VEVO_PDF, visa_verified_at = upload timestamp
+
+SECTION 2 — Contact & Study (same as Phase 2, see below)
+SECTION 3 — Consent (same as Phase 2, see below)
+```
+
+### Phase 2 (target) — Live API
 
 The student fills ONE short form. Everything else is pulled from government.
 
@@ -201,7 +243,9 @@ After the 4 API calls, the platform creates a `StudentProfile` record:
 
 ## RE-VERIFICATION SCHEDULE
 
-Student visa status changes (e.g. Bridging Visa A granted, conditions updated). Platform must re-verify periodically:
+### Live API (Phase 2)
+
+Student visa status changes (e.g. Bridging Visa A granted, conditions updated). Platform re-verifies automatically:
 
 | Trigger | Action |
 |---|---|
@@ -211,6 +255,72 @@ Student visa status changes (e.g. Bridging Visa A granted, conditions updated). 
 | Platform scheduled job | Re-verify all users monthly |
 
 Response field `currentTimestamp` from VEVO is stored as `last_verified_at` — shown in UI so student knows how fresh the data is.
+
+### myVEVO PDF (Phase 1 / MVP) — staleness & refresh logic
+
+A PDF is a snapshot, not a live feed — there's no scheduled job that can silently refresh it.
+The platform instead tracks **data age** and **prompts the student to re-upload**.
+
+**`VisaVerificationSource` enum** — every profile records how its visa data was obtained:
+
+```python
+class VisaVerificationSource(Enum):
+    VEVO_API    = "live"     # real-time, authoritative (Phase 2)
+    VEVO_PDF    = "snapshot" # static myVEVO document, requires re-upload (Phase 1)
+    SELF_REPORT = "manual"   # lowest trust, no gov source — fallback only
+
+# Every stored profile tracks:
+student.visa_verification_source = VisaVerificationSource.VEVO_PDF
+student.visa_verified_at          = datetime(2026, 5, 27)
+student.visa_data_age_days        = (today - student.visa_verified_at).days
+student.visa_refresh_required     = (
+    student.visa_data_age_days > 90 or student.days_until_visa_expiry < 60
+)
+```
+
+**Mandatory re-upload triggers:**
+
+| # | Trigger | Rule |
+|---|---|---|
+| 1 | Time-based | Data older than 90 days |
+| 2 | Expiry-proximity | Less than 60 days until `visa_expiry_date` |
+| 3 | Student-reported change | Student flags "my visa changed" (e.g. BVA granted, new subclass) |
+| 4 | New-subclass detected | Re-uploaded PDF shows different subclass than stored |
+| 5 | Inactivity | Student returns after 30+ days away → prompt re-upload before showing pathway data |
+
+**Staleness warning tiers (shown in UI):**
+
+| Badge | Age of data | Platform behaviour |
+|---|---|---|
+| 🟢 Verified | 0–14 days | Normal — full trust |
+| 🟡 14–45 days | "Your visa data is X days old — consider refreshing" | Soft nudge, banner only |
+| 🟠 45–90 days | "Please re-verify your visa to keep your roadmap accurate" | Persistent banner, dashboard warning |
+| 🔴 90+ days | "Visa data expired — re-upload required" | Pathway calculations **blocked** until re-upload |
+| 🔴 <60 days to visa expiry | "Your visa expires soon — re-verify now" | Pathway calculations **blocked** regardless of data age |
+
+**Refresh frequency by stage** (recommended prompt cadence, not hard limits):
+
+| Student stage | Recommended re-upload frequency |
+|---|---|
+| Studying, >12 months to visa expiry | Every 90 days |
+| Studying, 6–12 months to expiry | Every 45 days |
+| Studying, <6 months to expiry | Every 14 days |
+| Post-graduation, on 485 | Every 30 days |
+| EOI lodged, awaiting invitation | Every 14 days |
+| On Bridging Visa A | Every 7 days (status can change quickly) |
+
+**What a PDF cannot detect (limitations to disclose to the student):**
+- Visa cancellations, condition changes, or BVA grants that occur *after* the PDF was generated
+- Ministerial intervention status changes
+- Real-time `visaHolderIsOnshore` / location changes (e.g. departing/returning Australia)
+
+**Disclaimer banner (always shown when `verification_source == VEVO_PDF`):**
+
+```
+ℹ️ Your visa details were verified from a myVEVO document you uploaded on 27 May 2026.
+   This is official Home Affairs data, but it's a snapshot — re-upload periodically
+   (see schedule) so PathwayAU can detect any changes to your visa status.
+```
 
 ---
 
