@@ -1,0 +1,356 @@
+// PathwayAU schema — derived from memory/student_workflow_and_erd.md
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums ─────────────────────────────────────────────────────────
+
+enum VisaVerificationSource {
+  VEVO_API // live, authoritative (Phase 2)
+  VEVO_PDF // static myVEVO snapshot, requires re-upload (Phase 1 MVP)
+  SELF_REPORT // lowest trust, no gov source
+}
+
+enum PathwayAssessmentStatus {
+  CANDIDATE // shown in comparison table
+  SELECTED // chosen by student, can still swap
+  LOCKED // final — generates roadmap
+}
+
+enum NominationStatus {
+  OPEN
+  CLOSED
+  CAPPED
+}
+
+enum OccupationListType {
+  CSOL
+  MLTSSL
+  STSOL
+  OSL
+  SPL
+}
+
+// ── Student & profile ─────────────────────────────────────────────
+
+model Student {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  givenName  String
+  familyName String
+  birthDate  DateTime @db.Date
+  createdAt  DateTime @default(now())
+
+  visaProfile        VisaProfile?
+  studyContext       StudyContext?
+  skillsAssessments  SkillsAssessment[]
+  englishTestResults EnglishTestResult[]
+  pointsCalculations PointsCalculation[]
+  pathwayAssessments PathwayAssessment[]
+  eoi                Eoi?
+  healthExaminations HealthExamination[]
+  policeClearances   PoliceClearance[]
+  documentItems      DocumentChecklistItem[]
+}
+
+model VisaProfile {
+  id                     String                 @id @default(uuid())
+  studentId              String                 @unique
+  student                Student                @relation(fields: [studentId], references: [id])
+  visaSubclass           String
+  visaClass              String?
+  visaGrantDate          DateTime?              @db.Date
+  visaExpiryDate         DateTime               @db.Date
+  status                 String // GRANTED etc.
+  residenceStatus        String?
+  immigrationStatus      String?
+  studyEntitlementStatus String? // NIL | LIMITED | UNLIMITED
+  workEntitlementStatus  String? // NIL | LIMITED | UNLIMITED
+  studyConditions        Json?
+  workConditions         Json?
+  visaHolderIsOnshore    Boolean?
+  verificationSource     VisaVerificationSource
+  verifiedAt             DateTime
+  updatedAt              DateTime               @updatedAt
+}
+
+model StudyContext {
+  id                    String      @id @default(uuid())
+  studentId             String      @unique
+  student               Student     @relation(fields: [studentId], references: [id])
+  institutionId         String
+  institution           Institution @relation(fields: [institutionId], references: [id])
+  courseId              String
+  course                Course      @relation(fields: [courseId], references: [id])
+  courseStart           DateTime    @db.Date
+  courseEndExpected     DateTime    @db.Date
+  locationPostcode      String
+  regionalBonusEligible Boolean     @default(false)
+}
+
+// ── Reference data (gov-sourced) ──────────────────────────────────
+
+model Institution {
+  id                 String         @id @default(uuid())
+  name               String
+  cricosProviderCode String         @unique
+  state              String
+  courses            Course[]
+  studyContexts      StudyContext[]
+}
+
+model Course {
+  id               String             @id @default(uuid())
+  cricosCourseCode String             @unique
+  name             String
+  level            String // Bachelor, Masters, Diploma...
+  institutionId    String
+  institution      Institution        @relation(fields: [institutionId], references: [id])
+  studyContexts    StudyContext[]
+  anzscoMappings   CourseAnzscoLink[]
+}
+
+model AnzscoOccupation {
+  code       String @id // e.g. "261313"
+  title      String
+  unitGroup  String
+  skillLevel Int
+
+  courseMappings     CourseAnzscoLink[]
+  assessingBodyLinks AnzscoAssessingBodyLink[]
+  skillsAssessments  SkillsAssessment[]
+  shortageStatuses   OccupationShortageStatus[]
+  skillSelectRounds  SkillSelectRound[]
+  stateNominations   StateNomination[]
+  pathwayAssessments PathwayAssessment[]
+  eois               Eoi[]
+}
+
+// Course ↔ ANZSCO many-to-many (GAP 9, both directions)
+model CourseAnzscoLink {
+  courseId   String
+  course     Course           @relation(fields: [courseId], references: [id])
+  anzscoCode String
+  anzsco     AnzscoOccupation @relation(fields: [anzscoCode], references: [code])
+
+  @@id([courseId, anzscoCode])
+}
+
+model AssessingBody {
+  id                String                    @id @default(uuid())
+  name              String                    @unique // ACS, VETASSESS, EA, ANMAC...
+  websiteUrl        String
+  anzscoLinks       AnzscoAssessingBodyLink[]
+  skillsAssessments SkillsAssessment[]
+}
+
+model AnzscoAssessingBodyLink {
+  anzscoCode      String
+  anzsco          AnzscoOccupation @relation(fields: [anzscoCode], references: [code])
+  assessingBodyId String
+  assessingBody   AssessingBody    @relation(fields: [assessingBodyId], references: [id])
+
+  @@id([anzscoCode, assessingBodyId])
+}
+
+model VisaPathway {
+  code             String                   @id // "189" | "190" | "491" | "482" | "485"...
+  name             String
+  baseRequirements Json?
+  rounds           SkillSelectRound[]
+  nominations      StateNomination[]
+  processingTimes  ProcessingTimeEstimate[]
+  fees             VisaFee[]
+  assessments      PathwayAssessment[]
+  eois             Eoi[]
+}
+
+// ── Student journey records ───────────────────────────────────────
+
+model SkillsAssessment {
+  id              String           @id @default(uuid())
+  studentId       String
+  student         Student          @relation(fields: [studentId], references: [id])
+  anzscoCode      String
+  anzsco          AnzscoOccupation @relation(fields: [anzscoCode], references: [code])
+  assessingBodyId String
+  assessingBody   AssessingBody    @relation(fields: [assessingBodyId], references: [id])
+  status          String // not_started | lodged | in_progress | complete
+  lodgedDate      DateTime?        @db.Date
+  outcomeDate     DateTime?        @db.Date
+  expiryDate      DateTime?        @db.Date // typically 3 years
+  outcome         String? // positive | negative
+}
+
+model EnglishTestResult {
+  id               String   @id @default(uuid())
+  studentId        String
+  student          Student  @relation(fields: [studentId], references: [id])
+  testType         String // IELTS | PTE | TOEFL | OET
+  scores           Json
+  testDate         DateTime @db.Date
+  expiryDate       DateTime @db.Date // 3 years
+  proficiencyLevel String // competent | proficient | superior
+}
+
+model PointsCalculation {
+  id             String   @id @default(uuid())
+  studentId      String
+  student        Student  @relation(fields: [studentId], references: [id])
+  calculatedAt   DateTime @default(now())
+  totalPoints    Int
+  breakdown      Json // per-category points
+  sourceCitation String // points table source URL + fetch timestamp
+}
+
+model PathwayAssessment {
+  id                     String                  @id @default(uuid())
+  studentId              String
+  student                Student                 @relation(fields: [studentId], references: [id])
+  pathwayCode            String
+  pathway                VisaPathway             @relation(fields: [pathwayCode], references: [code])
+  anzscoCode             String
+  anzsco                 AnzscoOccupation        @relation(fields: [anzscoCode], references: [code])
+  prProbability          Float
+  minPointsRequired      Int
+  processingTimeEstimate String?
+  status                 PathwayAssessmentStatus @default(CANDIDATE)
+  lockedAt               DateTime?
+
+  @@unique([studentId, pathwayCode, anzscoCode])
+}
+
+model Eoi {
+  id                String           @id @default(uuid())
+  studentId         String           @unique
+  student           Student          @relation(fields: [studentId], references: [id])
+  pathwayCode       String
+  pathway           VisaPathway      @relation(fields: [pathwayCode], references: [code])
+  anzscoCode        String
+  anzsco            AnzscoOccupation @relation(fields: [anzscoCode], references: [code])
+  pointsAtLodgement Int
+  dateOfEffect      DateTime         @db.Date
+  status            String // submitted | invited | lapsed
+}
+
+model HealthExamination {
+  id             String    @id @default(uuid())
+  studentId      String
+  student        Student   @relation(fields: [studentId], references: [id])
+  panelPhysician String?
+  examDate       DateTime? @db.Date
+  resultStatus   String // pending | cleared | referred
+  expiryDate     DateTime? @db.Date // 12 months
+}
+
+model PoliceClearance {
+  id         String    @id @default(uuid())
+  studentId  String
+  student    Student   @relation(fields: [studentId], references: [id])
+  country    String
+  issuedDate DateTime? @db.Date
+  status     String // not_started | applied | received
+}
+
+model DocumentChecklistItem {
+  id           String    @id @default(uuid())
+  studentId    String
+  student      Student   @relation(fields: [studentId], references: [id])
+  documentType String
+  status       String // missing | uploaded | verified
+  uploadedAt   DateTime?
+}
+
+// ── Live government data (refreshed by ingestion jobs) ────────────
+
+model SkillSelectRound {
+  id                String           @id @default(uuid())
+  pathwayCode       String
+  pathway           VisaPathway      @relation(fields: [pathwayCode], references: [code])
+  anzscoCode        String
+  anzsco            AnzscoOccupation @relation(fields: [anzscoCode], references: [code])
+  roundDate         DateTime         @db.Date
+  occupationCeiling Int?
+  minPointsInvited  Int?
+  sourceUrl         String
+  fetchedAt         DateTime
+
+  @@unique([pathwayCode, anzscoCode, roundDate])
+}
+
+model StateNomination {
+  id          String           @id @default(uuid())
+  state       String // NSW | VIC | QLD | WA | SA | TAS | ACT | NT
+  pathwayCode String
+  pathway     VisaPathway      @relation(fields: [pathwayCode], references: [code])
+  anzscoCode  String
+  anzsco      AnzscoOccupation @relation(fields: [anzscoCode], references: [code])
+  status      NominationStatus
+  sourceUrl   String
+  fetchedAt   DateTime
+
+  @@unique([state, pathwayCode, anzscoCode])
+}
+
+model OccupationShortageStatus {
+  id         String             @id @default(uuid())
+  anzscoCode String
+  anzsco     AnzscoOccupation   @relation(fields: [anzscoCode], references: [code])
+  listType   OccupationListType
+  status     String // in_shortage | no_shortage | listed | not_listed
+  sourceUrl  String
+  fetchedAt  DateTime
+
+  @@unique([anzscoCode, listType])
+}
+
+model ProcessingTimeEstimate {
+  id               String      @id @default(uuid())
+  pathwayCode      String
+  pathway          VisaPathway @relation(fields: [pathwayCode], references: [code])
+  percentile50Days Int?
+  percentile75Days Int?
+  percentile90Days Int?
+  sourceUrl        String
+  fetchedAt        DateTime
+}
+
+model VisaFee {
+  id            String      @id @default(uuid())
+  pathwayCode   String
+  pathway       VisaPathway @relation(fields: [pathwayCode], references: [code])
+  baseFeeAud    Decimal     @db.Decimal(10, 2)
+  effectiveDate DateTime    @db.Date
+  sourceUrl     String
+}
+
+// ── Trust layer (Module 9 / 10) ───────────────────────────────────
+
+// Generic polymorphic citation — any entity can carry source + timestamp
+model DataSourceCitation {
+  id           String      @id @default(uuid())
+  entityType   String
+  entityId     String
+  sourceName   String
+  sourceUrl    String
+  fetchedAt    DateTime
+  refreshLogId String?
+  refreshLog   RefreshLog? @relation(fields: [refreshLogId], references: [id])
+
+  @@index([entityType, entityId])
+}
+
+model RefreshLog {
+  id             String               @id @default(uuid())
+  sourceName     String
+  fetchedAt      DateTime             @default(now())
+  status         String // success | failed | partial
+  recordsUpdated Int                  @default(0)
+  citations      DataSourceCitation[]
+}
