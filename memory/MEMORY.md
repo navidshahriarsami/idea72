@@ -18,3 +18,4 @@
 - [Module 13 — VEVO Verification](module_13_vevo_verification.md) — Live Home Affairs API v1.0.31: student onboarding form, 4 API calls, verified profile schema, UI, re-verification schedule, feeds all other modules
 - [Design System & Wireframes](design_system.md) — Colors, typography, nav, wireframes for landing/onboarding/dashboard/pathways/points calculator (ui-ux-pro-max, gov+SaaS)
 - [Pending Tasks](pending_tasks.md) — Open follow-ups (Home Affairs Dev Portal Case domain check)
+- [Student Workflow & ERD](student_workflow_and_erd.md) — End-to-end activity flow (all 17 modules, mermaid) and full database ERD with entity notes
