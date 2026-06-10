@@ -16,3 +16,5 @@
 - [Source Verification Log](source_verification_log.md) — Full audit Jun 2026, all sources live-checked, corrections noted (ACS now 35 codes)
 - [API Audit — All Sources](api_audit.md) — Full API vs XLSX vs HTML-only classification for every data source, ingestion strategy, Home Affairs dev portal, SkillSelect Qlik endpoint
 - [Module 13 — VEVO Verification](module_13_vevo_verification.md) — Live Home Affairs API v1.0.31: student onboarding form, 4 API calls, verified profile schema, UI, re-verification schedule, feeds all other modules
+- [Design System & Wireframes](design_system.md) — Colors, typography, nav, wireframes for landing/onboarding/dashboard/pathways/points calculator (ui-ux-pro-max, gov+SaaS)
+- [Pending Tasks](pending_tasks.md) — Open follow-ups (Home Affairs Dev Portal Case domain check)
